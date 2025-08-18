@@ -1,188 +1,157 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>SiteMonitor Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body {
-            margin: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #121212;
-            color: #fff;
-        }
-        header {
-            padding: 20px 40px;
-            background-color: #1e1e2f;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #2c2c3c;
-        }
-        header h1 {
-            color: #4caf50;
-        }
-        .stats {
-            display: flex;
-            gap: 30px;
-        }
-        .stat-card {
-            background-color: #1e1e2f;
-            padding: 15px 25px;
-            border-radius: 10px;
-            text-align: center;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-        }
-        .stat-card h2 {
-            margin: 5px 0;
-            font-size: 20px;
-        }
-        .stat-card p {
-            margin: 0;
-            color: #aaa;
-            font-size: 14px;
-        }
-        .charts-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
-            gap: 30px;
-            padding: 30px 40px;
-        }
-        .site-container {
-            background-color: #1e1e2f;
-            border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-        }
-        .site-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-        select {
-            padding: 5px 10px;
-            border-radius: 5px;
-            border: none;
-            background-color: #2c2c3c;
-            color: #fff;
-            font-size: 14px;
-        }
-        canvas {
-            background-color: #121212;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>Website TTFB & Delay Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      margin: 20px;
+      background: #f0f2f5;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .controls {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 15px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      transition: transform 0.2s;
+    }
+    .card:hover {
+      transform: translateY(-4px);
+    }
+    h2 {
+      margin-bottom: 15px;
+      font-size: 18px;
+      text-align: center;
+      color: #333;
+    }
+    .chart-container {
+      margin-bottom: 20px;
+    }
+    canvas {
+      width: 100% !important;
+      height: 250px !important;
+    }
+  </style>
 </head>
 <body>
-    <header>
-        <h1>SiteMonitor</h1>
-        <div class="stats">
-            <div class="stat-card">
-                <h2>10</h2>
-                <p>Websites Monitored</p>
-            </div>
-            <div class="stat-card">
-                <h2>1.2s</h2>
-                <p>Average TTFB</p>
-            </div>
-            <div class="stat-card">
-                <h2>98.5%</h2>
-                <p>Uptime</p>
-            </div>
-        </div>
-    </header>
+  <h1>Website Performance Dashboard</h1>
 
-    <div class="charts-container" id="charts-container"></div>
+  <div class="controls">
+    <label for="period">Select Period:</label>
+    <select id="period">
+      <option value="daily">Daily (Hourly)</option>
+      <option value="weekly">Weekly (Last 7 Days)</option>
+      <option value="monthly">Monthly (Last 30 Days)</option>
+    </select>
+    <button onclick="updateCharts()">Update</button>
+  </div>
 
-    <script>
-        const websites = [
-            "https://www.google.com",
-            "https://www.youtube.com",
-            "https://www.facebook.com",
-            "https://www.instagram.com",
-            "https://chat.openai.com",
-            "https://www.x.com",
-            "https://www.reddit.com",
-            "https://www.whatsapp.com",
-            "https://www.bing.com",
-            "https://www.wikipedia.org"
-        ];
+  <div id="charts" class="grid"></div>
 
-        const container = document.getElementById("charts-container");
-        const chartObjects = {};
+  <script>
+    let charts = [];
 
-        websites.forEach(site => {
-            const siteId = site.replace(/https:\/\/(www\.)?/, '').replace(/\./g, '-');
+    async function fetchData(period) {
+      const res = await fetch(`/api/${period}`);
+      return await res.json();
+    }
 
-            const div = document.createElement('div');
-            div.className = 'site-container';
-            div.innerHTML = `
-                <div class="site-header">
-                    <h2>${site.replace('https://www.', '')}</h2>
-                    <select id="select-${siteId}">
-                        <option value="daily">Daily</option>
-                        <option value="weekly">Weekly</option>
-                        <option value="monthly">Monthly</option>
-                    </select>
-                </div>
-                <canvas id="chart-${siteId}" width="500" height="250"></canvas>
-            `;
-            container.appendChild(div);
-
-            const ctx = document.getElementById(`chart-${siteId}`).getContext('2d');
-            chartObjects[site] = new Chart(ctx, {
-                type: 'line',
-                data: { labels: [], datasets: [{ label: 'TTFB (s)', data: [], borderWidth: 2, fill: false, borderColor: '#4caf50', tension: 0.3 }] },
-                options: { 
-                    responsive: true, 
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        y: { beginAtZero: true, ticks: { color: '#fff' } },
-                        x: { ticks: { color: '#fff' } }
-                    }
-                }
-            });
-
-            document.getElementById(`select-${siteId}`).addEventListener('change', () => {
-                updateChart(site);
-            });
-        });
-
-        async function updateChart(site) {
-            const siteId = site.replace(/https:\/\/(www\.)?/, '').replace(/\./g, '-');
-            const type = document.getElementById(`select-${siteId}`).value;
-            const endpoint = `/api/${type}`;
-            const data = await fetch(endpoint).then(res => res.json());
-
-            let labels = [];
-            let values = [];
-
-            if (type === 'daily') {
-                labels = [...Array(24).keys()].map(h => h.toString());
-                values = Array(24).fill(null);
-                data[site].forEach(d => { values[parseInt(d.hour)] = d.avg_ttfb; });
-            } else if (type === 'weekly') {
-                labels = Object.keys(data[site] || []);
-                values = labels.map(day => {
-                    const am = data[site][day]?.AM || 0;
-                    const pm = data[site][day]?.PM || 0;
-                    return (am + pm) / 2;
-                });
-            } else if (type === 'monthly') {
-                labels = data[site].map(d => d.day);
-                values = data[site].map(d => d.avg_ttfb);
+    function createLineChart(canvas, title, labels, data, color) {
+      return new Chart(canvas.getContext("2d"), {
+        type: "line",
+        data: {
+          labels,
+          datasets: [{
+            label: title,
+            data,
+            borderColor: color,
+            backgroundColor: color + "33",
+            borderWidth: 2,
+            fill: true,
+            tension: 0.3
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              mode: "index",
+              intersect: false,
+              backgroundColor: "#333",
+              titleColor: "#fff",
+              bodyColor: "#fff"
             }
-
-            chartObjects[site].data.labels = labels;
-            chartObjects[site].data.datasets[0].data = values;
-            chartObjects[site].update();
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: "Seconds" }
+            }
+          }
         }
+      });
+    }
 
-        websites.forEach(site => updateChart(site));
+    async function updateCharts() {
+      const period = document.getElementById("period").value;
+      const data = await fetchData(period);
 
-        setInterval(() => {
-            websites.forEach(site => updateChart(site));
-        }, 5 * 60 * 1000);
-    </script>
+      const chartContainer = document.getElementById("charts");
+      chartContainer.innerHTML = "";
+      charts.forEach(ch => ch.destroy());
+      charts = [];
+
+      const colors = ["#4e79a7","#f28e2b","#e15759","#76b7b2","#59a14f","#edc948","#b07aa1","#ff9da7","#9c755f","#bab0ab"];
+
+      let i = 0;
+      for (const site in data) {
+        const labels = data[site].map(d => d.label);
+        const values = data[site].map(d => d.avg_ttfb);
+
+        // Card container for one website
+        const card = document.createElement("div");
+        card.className = "card";
+        card.innerHTML = `<h2>${site}</h2>`;
+        chartContainer.appendChild(card);
+
+        // TTFB chart
+        const chartDiv1 = document.createElement("div");
+        chartDiv1.className = "chart-container";
+        const canvas1 = document.createElement("canvas");
+        chartDiv1.appendChild(canvas1);
+        card.appendChild(chartDiv1);
+        charts.push(createLineChart(canvas1, "TTFB", labels, values, colors[i % colors.length]));
+
+        // Loading Delay chart (using same data for now — if you store separately, replace with delay values)
+        const chartDiv2 = document.createElement("div");
+        chartDiv2.className = "chart-container";
+        const canvas2 = document.createElement("canvas");
+        chartDiv2.appendChild(canvas2);
+        card.appendChild(chartDiv2);
+        charts.push(createLineChart(canvas2, "Loading Delay", labels, values, colors[i % colors.length]));
+
+        i++;
+      }
+    }
+
+    // Load charts on startup
+    updateCharts();
+  </script>
 </body>
 </html>

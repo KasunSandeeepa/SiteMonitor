@@ -1,6 +1,11 @@
 from flask import Flask, jsonify, render_template
 import sqlite3
 from datetime import datetime, timedelta
+import subprocess
+import os
+
+# Start staggered_ttfb.py in background
+subprocess.Popen(["python", os.path.join(os.path.dirname(__file__), "staggered_ttfb..py")])
 
 app = Flask(__name__)
 DB_FILE = "sitemonitor.db"
@@ -18,96 +23,57 @@ websites = [
     "https://www.wikipedia.org"
 ]
 
-
-# Serve index.html
-# ------------------------------
 @app.route("/")
 def home():
     return render_template("index.html")
 
-# ------------------------------
-# Daily averages (hourly)
-# ------------------------------
-@app.route("/api/daily")
-def daily():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    today = datetime.now().strftime("%Y-%m-%d")
-    result = {}
-
-    for site in websites:
-        cursor.execute("""
-            SELECT strftime('%H', timestamp) AS hour, AVG(ttfb)
-            FROM measurements
-            WHERE website = ? AND date(timestamp) = ?
-            GROUP BY hour
-            ORDER BY hour
-        """, (site, today))
-        rows = cursor.fetchall()
-        result[site] = [{"hour": hour, "avg_ttfb": avg} for hour, avg in rows]
-
-    conn.close()
-    return jsonify(result)
-
-# ------------------------------
-# Weekly averages (2 per day: AM/PM)
-# ------------------------------
-@app.route("/api/weekly")
-def weekly():
+@app.route("/api/<period>")
+def get_data(period):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     today = datetime.now().date()
-    week_ago = today - timedelta(days=6)
-    result = {}
 
-    for site in websites:
-        cursor.execute("""
-            SELECT date(timestamp) AS day,
-                   CASE WHEN strftime('%H', timestamp) < '12' THEN 'AM' ELSE 'PM' END AS period,
-                   AVG(ttfb)
+    if period == "daily":
+        today_str = today.strftime("%Y-%m-%d")
+        query = """
+            SELECT strftime('%H', timestamp) AS label, AVG(ttfb)
+            FROM measurements
+            WHERE website = ? AND date(timestamp) = ?
+            GROUP BY label ORDER BY label
+        """
+        params = lambda site: (site, today_str)
+
+    elif period == "weekly":
+        week_ago = today - timedelta(days=6)
+        query = """
+            SELECT date(timestamp) AS label, AVG(ttfb)
             FROM measurements
             WHERE website = ? AND date(timestamp) BETWEEN ? AND ?
-            GROUP BY day, period
-            ORDER BY day, period
-        """, (site, week_ago, today))
-        rows = cursor.fetchall()
-        site_data = {}
-        for day, period, avg in rows:
-            if day not in site_data:
-                site_data[day] = {}
-            site_data[day][period] = avg
-        result[site] = site_data
+            GROUP BY label ORDER BY label
+        """
+        params = lambda site: (site, week_ago, today)
 
-    conn.close()
-    return jsonify(result)
-
-# ------------------------------
-# Monthly averages (daily)
-# ------------------------------
-@app.route("/api/monthly")
-def monthly():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    month = datetime.now().strftime("%m")
-    year = datetime.now().strftime("%Y")
-    result = {}
-
-    for site in websites:
-        cursor.execute("""
-            SELECT date(timestamp) AS day, AVG(ttfb)
+    elif period == "monthly":
+        month_ago = today - timedelta(days=30)
+        query = """
+            SELECT date(timestamp) AS label, AVG(ttfb)
             FROM measurements
-            WHERE website = ? AND strftime('%m', timestamp) = ? AND strftime('%Y', timestamp) = ?
-            GROUP BY day
-            ORDER BY day
-        """, (site, month, year))
+            WHERE website = ? AND date(timestamp) BETWEEN ? AND ?
+            GROUP BY label ORDER BY label
+        """
+        params = lambda site: (site, month_ago, today)
+
+    else:
+        return jsonify({"error": "Invalid period"}), 400
+
+    result = {}
+    for site in websites:
+        cursor.execute(query, params(site))
         rows = cursor.fetchall()
-        result[site] = [{"day": day, "avg_ttfb": avg} for day, avg in rows]
+        result[site] = [{"label": label, "avg_ttfb": avg} for label, avg in rows]
 
     conn.close()
     return jsonify(result)
 
-# ------------------------------
-# Main
-# ------------------------------
 if __name__ == "__main__":
     app.run(debug=True)
