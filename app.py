@@ -1,11 +1,7 @@
 from flask import Flask, jsonify, render_template
 import sqlite3
-from datetime import datetime, timedelta
 import subprocess
 import os
-
-# Start staggered_ttfb.py in background
-subprocess.Popen(["python", os.path.join(os.path.dirname(__file__), "staggered_ttfb..py")])
 
 app = Flask(__name__)
 DB_FILE = "sitemonitor.db"
@@ -23,57 +19,50 @@ websites = [
     "https://www.wikipedia.org"
 ]
 
+# Ensure DB & table exist
+conn = sqlite3.connect(DB_FILE)
+cursor = conn.cursor()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS measurements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    website TEXT,
+    timestamp DATETIME,
+    ttfb REAL,
+    loading_delay REAL
+)
+""")
+conn.commit()
+conn.close()
+
+# Start staggered_ttfb.py in background
+script_path = os.path.join(os.path.dirname(__file__), "staggered_ttfb..py")
+subprocess.Popen(["python", script_path])
+
+# Home page
 @app.route("/")
 def home():
-    return render_template("index.html")
+    return render_template("index.html", websites=websites)
 
-@app.route("/api/<period>")
-def get_data(period):
+# API route for latest 50 measurements per site
+@app.route("/api/data/<path:site>")
+def data(site):
+    # site now includes full URL (slashes and colon)
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    today = datetime.now().date()
-
-    if period == "daily":
-        today_str = today.strftime("%Y-%m-%d")
-        query = """
-            SELECT strftime('%H', timestamp) AS label, AVG(ttfb)
-            FROM measurements
-            WHERE website = ? AND date(timestamp) = ?
-            GROUP BY label ORDER BY label
-        """
-        params = lambda site: (site, today_str)
-
-    elif period == "weekly":
-        week_ago = today - timedelta(days=6)
-        query = """
-            SELECT date(timestamp) AS label, AVG(ttfb)
-            FROM measurements
-            WHERE website = ? AND date(timestamp) BETWEEN ? AND ?
-            GROUP BY label ORDER BY label
-        """
-        params = lambda site: (site, week_ago, today)
-
-    elif period == "monthly":
-        month_ago = today - timedelta(days=30)
-        query = """
-            SELECT date(timestamp) AS label, AVG(ttfb)
-            FROM measurements
-            WHERE website = ? AND date(timestamp) BETWEEN ? AND ?
-            GROUP BY label ORDER BY label
-        """
-        params = lambda site: (site, month_ago, today)
-
-    else:
-        return jsonify({"error": "Invalid period"}), 400
-
-    result = {}
-    for site in websites:
-        cursor.execute(query, params(site))
-        rows = cursor.fetchall()
-        result[site] = [{"label": label, "avg_ttfb": avg} for label, avg in rows]
-
+    cursor.execute("""
+        SELECT timestamp, ttfb, loading_delay
+        FROM measurements
+        WHERE website = ?
+        ORDER BY timestamp DESC
+        LIMIT 50
+    """, (site,))
+    rows = cursor.fetchall()
     conn.close()
-    return jsonify(result)
+    rows.reverse()  # oldest first
+    return jsonify([
+        {"time": t, "ttfb": ttfb, "loading_delay": load}
+        for t, ttfb, load in rows
+    ])
 
 if __name__ == "__main__":
     app.run(debug=True)
